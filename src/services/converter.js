@@ -1,11 +1,11 @@
 const path = require('path');
+const fs = require('fs').promises;
 const { translate } = require('translate-american-british-english');
 
 class NZSpellingConverter {
   constructor() {
-    this.phraseMap = require('../data/phrase_map.json');
-    this.exceptionsMap = require('../data/spelling_exceptions.json');
-    this.customMappings = {};
+    this.correctionsPath = path.join(__dirname, '../data/corrections.json');
+    this.corrections = {};
     this.gbDictionary = null;
     this.usDictionary = null;
     this.initialized = false;
@@ -13,6 +13,15 @@ class NZSpellingConverter {
 
   async initialize() {
     if (this.initialized) return;
+
+    // Load corrections from file
+    try {
+      const correctionsData = await fs.readFile(this.correctionsPath, 'utf8');
+      this.corrections = JSON.parse(correctionsData);
+    } catch (error) {
+      console.warn('Could not load corrections file, starting with empty corrections:', error.message);
+      this.corrections = {};
+    }
 
     const { getDictionary } = await import('cspell-lib');
     const gbExt = require('@cspell/dict-en-gb-ise/cspell-ext.json');
@@ -48,6 +57,15 @@ class NZSpellingConverter {
     this.gbDictionary = gbDictionary;
     this.usDictionary = usDictionary;
     this.initialized = true;
+  }
+
+  async saveCorrections() {
+    try {
+      await fs.writeFile(this.correctionsPath, JSON.stringify(this.corrections, null, 2), 'utf8');
+    } catch (error) {
+      console.error('Failed to save corrections:', error);
+      throw error;
+    }
   }
 
   escapeRegExp(text) {
@@ -102,9 +120,9 @@ class NZSpellingConverter {
     return replacement;
   }
 
-  applyMappings(text, mappings) {
-    const entries = Object.keys(mappings)
-      .map((phrase) => ({ phrase, replacement: mappings[phrase] }))
+  applyCorrections(text) {
+    const entries = Object.keys(this.corrections)
+      .map((phrase) => ({ phrase, replacement: this.corrections[phrase] }))
       .sort((a, b) => b.phrase.length - a.phrase.length);
 
     let updated = text;
@@ -113,18 +131,6 @@ class NZSpellingConverter {
       updated = updated.replace(regex, (match) => this.matchPhraseCase(match, replacement));
     }
     return updated;
-  }
-
-  applyPhraseReplacements(text) {
-    return this.applyMappings(text, this.phraseMap);
-  }
-
-  applyExceptionReplacements(text) {
-    return this.applyMappings(text, this.exceptionsMap);
-  }
-
-  applyCustomMappings(text) {
-    return this.applyMappings(text, this.customMappings);
   }
 
   applyIseConversions(text) {
@@ -165,17 +171,19 @@ class NZSpellingConverter {
       await this.initialize();
     }
 
+    // 1. Normalize special characters
     const normalized = this.replaceEmDash(text);
-    const phraseAdjusted = this.applyPhraseReplacements(normalized);
-    const exceptionAdjusted = this.applyExceptionReplacements(phraseAdjusted);
-    const customAdjusted = this.applyCustomMappings(exceptionAdjusted);
-    const protectedCurrency = this.protectCurrencySymbols(customAdjusted);
+    const protectedCurrency = this.protectCurrencySymbols(normalized);
+
+    // 2. Main translation (US → UK)
     const translated = translate(protectedCurrency);
     const restoredCurrency = this.restoreCurrencySymbols(translated);
-    const restoredExceptions = this.applyExceptionReplacements(restoredCurrency);
-    const restoredCustom = this.applyCustomMappings(restoredExceptions);
-    const finalPhrases = this.applyPhraseReplacements(restoredCustom);
-    return this.applyIseConversions(finalPhrases);
+
+    // 3. Apply corrections (fixes archaic spellings, NZ-specific terms)
+    const corrected = this.applyCorrections(restoredCurrency);
+
+    // 4. Final -ize → -ise conversion
+    return this.applyIseConversions(corrected);
   }
 
   async convertObject(value) {
@@ -203,20 +211,28 @@ class NZSpellingConverter {
     return value;
   }
 
-  addCustomMapping(from, to) {
-    this.customMappings[from] = to;
+  async addCorrection(from, to) {
+    this.corrections[from] = to;
+    await this.saveCorrections();
   }
 
-  removeCustomMapping(from) {
-    delete this.customMappings[from];
+  async addCorrections(mappings) {
+    this.corrections = { ...this.corrections, ...mappings };
+    await this.saveCorrections();
   }
 
-  getCustomMappings() {
-    return { ...this.customMappings };
+  async removeCorrection(from) {
+    delete this.corrections[from];
+    await this.saveCorrections();
   }
 
-  clearCustomMappings() {
-    this.customMappings = {};
+  getCorrections() {
+    return { ...this.corrections };
+  }
+
+  async clearCorrections() {
+    this.corrections = {};
+    await this.saveCorrections();
   }
 }
 

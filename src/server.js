@@ -12,6 +12,58 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', initialized: converter.initialized });
 });
 
+app.get('/help', (req, res) => {
+  res.json({
+    name: 'NZ Spelling Converter API',
+    description: 'Converts American/British English to New Zealand English spelling',
+    endpoints: {
+      'GET /health': {
+        description: 'Health check endpoint',
+        example: 'curl https://convert.marketingtech.pro/health'
+      },
+      'GET /help': {
+        description: 'This help documentation',
+        example: 'curl https://convert.marketingtech.pro/help'
+      },
+      'POST /convert': {
+        description: 'Convert text or JSON data to NZ spelling',
+        examples: {
+          text: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"text": "The organization analyzed the color data."}\'',
+          data: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"data": {"title": "Color Report", "tags": ["organize", "analyze"]}}\''
+        }
+      },
+      'GET /corrections': {
+        description: 'View all active post-translation corrections',
+        example: 'curl https://convert.marketingtech.pro/corrections'
+      },
+      'POST /corrections': {
+        description: 'Add or update post-translation corrections (persisted to disk)',
+        example: 'curl -X POST https://convert.marketingtech.pro/corrections -H "Content-Type: application/json" -d \'{"corrections": {"cellphone": "mobile phone", "apartment": "flat"}}\''
+      },
+      'DELETE /corrections/:word': {
+        description: 'Remove a specific correction',
+        example: 'curl -X DELETE https://convert.marketingtech.pro/corrections/cellphone'
+      },
+      'DELETE /corrections': {
+        description: 'Clear all corrections',
+        example: 'curl -X DELETE https://convert.marketingtech.pro/corrections'
+      }
+    },
+    pipeline: [
+      '1. Normalize special characters (em-dash, currency)',
+      '2. Main translation (US → UK English)',
+      '3. Apply corrections (fix archaic spellings, NZ-specific terms)',
+      '4. Convert -ize to -ise'
+    ],
+    notes: [
+      'Corrections are applied AFTER main translation',
+      'Use corrections to fix archaic forms (philtre→filter, connexion→connection)',
+      'Use corrections for NZ-specific terms (sidewalk→footpath, zip code→postcode)',
+      'All corrections are persisted and survive server restarts'
+    ]
+  });
+});
+
 app.post('/convert', async (req, res) => {
   try {
     const { text, data } = req.body;
@@ -46,82 +98,83 @@ app.post('/convert', async (req, res) => {
   }
 });
 
-app.post('/mappings', async (req, res) => {
+app.post('/corrections', async (req, res) => {
   try {
-    const { mappings } = req.body;
+    const { corrections } = req.body;
 
-    if (!mappings || typeof mappings !== 'object') {
+    if (!corrections || typeof corrections !== 'object') {
       return res.status(400).json({
         error: 'Bad Request',
-        message: '"mappings" must be an object with from-to word pairs',
+        message: '"corrections" must be an object with from-to word pairs',
       });
     }
 
-    for (const [from, to] of Object.entries(mappings)) {
+    for (const [from, to] of Object.entries(corrections)) {
       if (typeof from !== 'string' || typeof to !== 'string') {
         return res.status(400).json({
           error: 'Bad Request',
-          message: 'All mapping keys and values must be strings',
+          message: 'All correction keys and values must be strings',
         });
       }
-      converter.addCustomMapping(from, to);
     }
 
+    await converter.addCorrections(corrections);
+
     res.json({
-      message: 'Custom mappings added successfully',
-      mappings: converter.getCustomMappings(),
+      message: 'Corrections added successfully',
+      corrections: converter.getCorrections(),
     });
   } catch (error) {
-    console.error('Mapping error:', error);
+    console.error('Correction error:', error);
     res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to add custom mappings',
+      message: 'Failed to add corrections',
     });
   }
 });
 
-app.get('/mappings', (req, res) => {
+app.get('/corrections', (req, res) => {
   try {
-    const mappings = converter.getCustomMappings();
-    res.json({ mappings });
+    const corrections = converter.getCorrections();
+    res.json({ corrections });
   } catch (error) {
-    console.error('Get mappings error:', error);
+    console.error('Get corrections error:', error);
     res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to retrieve custom mappings',
+      message: 'Failed to retrieve corrections',
     });
   }
 });
 
-app.delete('/mappings/:word', (req, res) => {
+app.delete('/corrections/:word', async (req, res) => {
   try {
     const { word } = req.params;
-    converter.removeCustomMapping(word);
+    await converter.removeCorrection(word);
     res.json({
-      message: `Mapping for "${word}" removed successfully`,
-      mappings: converter.getCustomMappings(),
+      message: `Correction for "${word}" removed successfully`,
+      corrections: converter.getCorrections(),
     });
   } catch (error) {
-    console.error('Delete mapping error:', error);
+    console.error('Delete correction error:', error);
     res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to remove custom mapping',
+      message: 'Failed to remove correction',
     });
   }
 });
 
-app.delete('/mappings', (req, res) => {
+app.delete('/corrections', async (req, res) => {
   try {
-    converter.clearCustomMappings();
+    await converter.clearCorrections();
     res.json({
-      message: 'All custom mappings cleared successfully',
-      mappings: {},
+      message: 'All corrections cleared successfully',
+      corrections: {},
     });
   } catch (error) {
-    console.error('Clear mappings error:', error);
+    console.error('Clear corrections error:', error);
     res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to clear custom mappings',
+      message: 'Failed to clear corrections',
     });
   }
 });
