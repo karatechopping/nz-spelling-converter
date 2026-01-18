@@ -27,9 +27,15 @@ app.get('/help', (req, res) => {
       },
       'POST /convert': {
         description: 'Convert text or JSON data to NZ spelling',
+        parameters: {
+          text: 'String to convert (optional)',
+          data: 'Object or array to convert (optional)',
+          html: 'Boolean flag to enable HTML mode - protects HTML tags and entities (optional, default: false)'
+        },
         examples: {
           text: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"text": "The organization analyzed the color data."}\'',
-          data: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"data": {"title": "Color Report", "tags": ["organize", "analyze"]}}\''
+          data: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"data": {"title": "Color Report", "tags": ["organize", "analyze"]}}\'',
+          html: 'curl -X POST https://convert.marketingtech.pro/convert -H "Content-Type: application/json" -d \'{"text": "<p>The organization analyzed the color data.</p>", "html": true}\''
         }
       },
       'GET /corrections': {
@@ -59,14 +65,16 @@ app.get('/help', (req, res) => {
       'Corrections are applied AFTER main translation',
       'Use corrections to fix archaic forms (philtre→filter, connexion→connection)',
       'Use corrections for NZ-specific terms (sidewalk→footpath, zip code→postcode)',
-      'All corrections are persisted and survive server restarts'
+      'All corrections are persisted and survive server restarts',
+      'HTML mode protects tags (<div>, <p>, etc.) and entities (&#8217;, &nbsp;, etc.) from conversion',
+      'Use HTML mode when converting HTML content to preserve markup structure'
     ]
   });
 });
 
 app.post('/convert', async (req, res) => {
   try {
-    const { text, data } = req.body;
+    const { text, data, html } = req.body;
 
     if (!text && !data) {
       return res.status(400).json({
@@ -74,6 +82,8 @@ app.post('/convert', async (req, res) => {
         message: 'Either "text" (string) or "data" (object/array) is required',
       });
     }
+
+    const isHtmlMode = html === true;
 
     if (text !== undefined) {
       if (typeof text !== 'string') {
@@ -83,11 +93,15 @@ app.post('/convert', async (req, res) => {
         });
       }
 
-      const converted = await converter.convert(text);
+      const converted = isHtmlMode
+        ? await converter.convertHtml(text)
+        : await converter.convert(text);
       return res.json({ converted });
     }
 
-    const converted = await converter.convertObject(data);
+    const converted = isHtmlMode
+      ? await converter.convertObjectHtml(data)
+      : await converter.convertObject(data);
     return res.json({ converted });
   } catch (error) {
     console.error('Conversion error:', error);

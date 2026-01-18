@@ -96,6 +96,47 @@ class NZSpellingConverter {
     return text.replace(new RegExp(token, 'g'), '$$');
   }
 
+  protectHtmlTags(text) {
+    const tags = [];
+    const tagRegex = /<[^>]+>/g;
+    const protectedText = text.replace(tagRegex, (match) => {
+      const index = tags.length;
+      tags.push(match);
+      return `[[HTMLTAG${index}]]`;
+    });
+    return { text: protectedText, tags };
+  }
+
+  restoreHtmlTags(text, tags) {
+    let restored = text;
+    tags.forEach((tag, index) => {
+      const token = `\\[\\[HTMLTAG${index}\\]\\]`;
+      restored = restored.replace(new RegExp(token, 'g'), tag);
+    });
+    return restored;
+  }
+
+  protectHtmlEntities(text) {
+    const entities = [];
+    // Match HTML entities: &#8217; &#123; &nbsp; &quot; &amp; etc.
+    const entityRegex = /&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g;
+    const protectedText = text.replace(entityRegex, (match) => {
+      const index = entities.length;
+      entities.push(match);
+      return `[[HTMLENTITY${index}]]`;
+    });
+    return { text: protectedText, entities };
+  }
+
+  restoreHtmlEntities(text, entities) {
+    let restored = text;
+    entities.forEach((entity, index) => {
+      const token = `\\[\\[HTMLENTITY${index}\\]\\]`;
+      restored = restored.replace(new RegExp(token, 'g'), entity);
+    });
+    return restored;
+  }
+
   titleCase(text) {
     return text
       .split(' ')
@@ -186,12 +227,41 @@ class NZSpellingConverter {
     return this.applyIseConversions(corrected);
   }
 
+  async convertHtml(text) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    // 1. Protect HTML tags
+    const { text: tagProtected, tags } = this.protectHtmlTags(text);
+
+    // 2. Protect HTML entities
+    const { text: entityProtected, entities } = this.protectHtmlEntities(tagProtected);
+
+    // 3. Apply normal conversion to the remaining text
+    const converted = await this.convert(entityProtected);
+
+    // 4. Restore HTML entities
+    const entitiesRestored = this.restoreHtmlEntities(converted, entities);
+
+    // 5. Restore HTML tags
+    return this.restoreHtmlTags(entitiesRestored, tags);
+  }
+
   async convertObject(value) {
     if (!this.initialized) {
       await this.initialize();
     }
 
     return this.walkAsync(value, async (text) => this.convert(text));
+  }
+
+  async convertObjectHtml(value) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    return this.walkAsync(value, async (text) => this.convertHtml(text));
   }
 
   async walkAsync(value, transform) {
